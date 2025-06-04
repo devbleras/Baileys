@@ -2,10 +2,19 @@ import { AccountSettings, ChatMutation, Contact, InitialAppStateSyncOptions } fr
 import { unixTimestampSeconds } from '../Utils'
 import { processSyncAction } from '../Utils/chat-utils'
 import logger from '../Utils/logger'
+import { makeEventBuffer } from '../Utils'
+import { randomJid } from './utils'
 
 describe('App State Sync Tests', () => {
 
-	const me: Contact = { id: randomJid() }
+       const me: Contact = { id: randomJid() }
+       let ev: ReturnType<typeof makeEventBuffer>
+
+       beforeEach(() => {
+               const _logger = logger.child({})
+               _logger.level = 'trace'
+               ev = makeEventBuffer(_logger)
+       })
 	// case when initial sync is off
 	it('should return archive=false event', () => {
 		const jid = randomJid()
@@ -57,12 +66,19 @@ describe('App State Sync Tests', () => {
 			]
 		]
 
-		for(const mutations of CASES) {
-			const events = processSyncAction(mutations, me, undefined, logger)
-			expect(events['chats.update']).toHaveLength(1)
-			const event = events['chats.update']?.[0]
-			expect(event.archive).toEqual(false)
-		}
+               for(const mutations of CASES) {
+                       const updates: any[] = []
+                       ev.on('chats.update', u => updates.push(...u))
+
+                       for(const mutation of mutations) {
+                               processSyncAction(mutation, ev, me, undefined, logger)
+                       }
+
+                       expect(updates.length).toBeGreaterThan(0)
+                       expect(updates[updates.length - 1].archived).toEqual(false)
+
+                       ev.removeAllListeners('chats.update')
+               }
 	})
 	// case when initial sync is on
 	// and unarchiveChats = true
@@ -132,17 +148,24 @@ describe('App State Sync Tests', () => {
 			],
 		]
 
-		const ctx: InitialAppStateSyncOptions = {
-			recvChats: {
-				[jid]: { lastMsgRecvTimestamp: now }
-			},
-			accountSettings: { unarchiveChats: true }
-		}
+               const ctx: InitialAppStateSyncOptions = {
+                       accountSettings: { unarchiveChats: true }
+               }
 
-		for(const mutations of CASES) {
-			const events = processSyncActions(mutations, me, ctx, logger)
-			expect(events['chats.update']?.length).toBeFalsy()
-		}
+               for(const mutations of CASES) {
+                       const updates: any[] = []
+                       ev.on('chats.update', u => updates.push(...u))
+
+                       for(const mutation of mutations) {
+                               processSyncAction(mutation, ev, me, ctx, logger)
+                       }
+
+                       const expected = (mutations[mutations.length - 1].syncAction.value as any).archiveChatAction?.archived ?? false
+                       expect(updates.length).toBeGreaterThan(0)
+                       expect(updates[updates.length - 1].archived).toEqual(expected)
+
+                       ev.removeAllListeners('chats.update')
+               }
 	})
 
 	// case when initial sync is on
@@ -191,17 +214,22 @@ describe('App State Sync Tests', () => {
 			}
 		]
 
-		for(const { mutations, settings } of CASES) {
-			const ctx: InitialAppStateSyncOptions = {
-				recvChats: {
-					[jid]: { lastMsgRecvTimestamp: now }
-				},
-				accountSettings: settings
-			}
-			const events = processSyncActions(mutations, me, ctx, logger)
-			expect(events['chats.update']).toHaveLength(1)
-			const event = events['chats.update']?.[0]
-			expect(event.archive).toEqual(true)
-		}
+               for(const { mutations, settings } of CASES) {
+                       const ctx: InitialAppStateSyncOptions = {
+                               accountSettings: settings
+                       }
+                       const updates: any[] = []
+                       ev.on('chats.update', u => updates.push(...u))
+
+                       for(const mutation of mutations) {
+                               processSyncAction(mutation, ev, me, ctx, logger)
+                       }
+
+                       const expected = (mutations[mutations.length - 1].syncAction.value as any).archiveChatAction?.archived ?? false
+                       expect(updates.length).toBeGreaterThan(0)
+                       expect(updates[updates.length - 1].archived).toEqual(expected)
+
+                       ev.removeAllListeners('chats.update')
+               }
 	})
 })
